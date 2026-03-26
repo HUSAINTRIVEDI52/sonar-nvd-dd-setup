@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - main
+      - test
 
 jobs:
   deploy:
@@ -30,8 +31,8 @@ jobs:
 
       - name: Copy files to VM
         run: |
-          gcloud compute scp docker-compose.yml deploy.sh .env ${{ secrets.GCP_VM_NAME }}:~/setup-pipeline/ --zone ${{ secrets.GCP_ZONE }}
+          gcloud compute scp --quiet docker-compose.yml deploy.sh .env ${{ secrets.GCP_VM_NAME }}:~/setup-pipeline/ --zone ${{ secrets.GCP_ZONE }}
 
       - name: Run Deployment Script
         run: |
-          gcloud compute ssh ${{ secrets.GCP_VM_NAME }} --zone ${{ secrets.GCP_ZONE }} --command "chmod +x ~/setup-pipeline/deploy.sh && ~/setup-pipeline/deploy.sh"
+          gcloud compute ssh --quiet ${{ secrets.GCP_VM_NAME }} --zone ${{ secrets.GCP_ZONE }} --command "chmod +x ~/setup-pipeline/deploy.sh && ~/setup-pipeline/deploy.sh"

@@ -19,7 +19,8 @@ This repository contains a CI/CD pipeline to deploy and manage SonarQube and Def
 4.  Assign the following roles:
     - `Compute Instance Admin (v1)`
     - `Service Account User`
-    - `IAP-secured Tunnel User` (If you want to use IAP for SSH)
+    - `Compute OS Login` (Mandatory if OS Login is enabled on your VM)
+    - `IAP-secured Tunnel User` (Mandatory if your VM doesn't have a public IP or is behind a firewall)
 5.  Create a JSON Key for this service account and download it.
 
 ### 2. GitHub Secrets setup
@@ -59,3 +60,6 @@ After deployment, the services will be available at:
 
 > [!NOTE]
 > Ensure that the GCP Firewall allows traffic on ports 9000 and 8080.
+
+> [!TIP]
+> If you encounter `Permission denied (publickey)`, ensure that `Compute OS Login` is assigned. If your VM is behind a firewall with no public IP, you may need to add `--tunnel-through-iap` to the `gcloud compute scp` and `ssh` commands in `.github/workflows/deploy.yml`.
