@@ -36,6 +36,49 @@ jobs:
           echo "Waiting 15 seconds for SSH keys to propagate to the sandbox instance..."
           sleep 15
 
+      - name: Download Complete NVD Database
+        env:
+          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
+        run: |
+          cat << 'EOF' > download_nvd.py
+          import os, requests, json, time
+          api_key = os.getenv('NVD_API_KEY')
+          headers = {'apiKey': api_key} if api_key else {}
+          base_url = "https://services.nvd.nist.gov/rest/json/cves/2.0"
+          start_index = 0
+          results_per_page = 2000
+          with open('nvd_database.json', 'w') as f:
+              f.write('{"vulnerabilities": [\n')
+              first = True
+              while True:
+                  try:
+                      url = f"{base_url}?startIndex={start_index}&resultsPerPage={results_per_page}"
+                      print(f"Fetching {start_index}...", flush=True)
+                      response = requests.get(url, headers=headers, timeout=30)
+                      if response.status_code in [403, 503, 429, 502, 504]:
+                          print(f"Server busy or rate limited ({response.status_code}), sleeping 15 seconds...", flush=True)
+                          time.sleep(15)
+                          continue
+                      response.raise_for_status()
+                      data = response.json()
+                      cves = data.get('vulnerabilities', [])
+                      for cve in cves:
+                          if not first: f.write(',\n')
+                          json.dump(cve, f)
+                          first = False
+                      total_results = data.get('totalResults', 0)
+                      start_index += len(cves)
+                      if start_index >= total_results or len(cves) == 0: break
+                      time.sleep(1) # NIST rate limit allows ~1.6 req/sec with an API key
+                  except Exception as e:
+                      print(f"Error: {e}. Retrying in 10 seconds...", flush=True)
+                      time.sleep(10)
+              f.write('\n]}')
+          print(f"Successfully downloaded {start_index} CVEs to nvd_database.json")
+          EOF
+          pip3 install requests
+          python3 download_nvd.py
+
       - name: Generate .env and Package
         run: |
           # Create the .env file with secrets
@@ -61,7 +104,7 @@ jobs:
           chmod +x remote_exec.sh
           
           # Bundle everything into a single archive
-          tar -czvf deploy.tar.gz docker-compose.yml deploy.sh .env remote_exec.sh
+          tar -czvf deploy.tar.gz docker-compose.yml deploy.sh .env remote_exec.sh nvd_database.json
 
       - name: Transfer Package to VM
         run: |

@@ -68,6 +68,7 @@ services:
       - DD_DATABASE_URL=postgres://postgres:${DB_PASSWORD}@db:5432/postgres
       - DD_CELERY_BROKER_URL=redis://redis:6379/0
       - DD_SECRET_KEY=${DD_SECRET_KEY}
+      - DD_NVD_API_KEY=${NVD_API_KEY}
     depends_on:
       db:
         condition: service_healthy
