@@ -16,11 +16,11 @@ This repository contains a CI/CD pipeline to deploy and manage SonarQube and Def
 1.  Go to the [GCP Console](https://console.cloud.google.com/).
 2.  Navigate to **IAM & Admin > Service Accounts**.
 3.  Create a new service account (e.g., `cicd-deployer`).
-4.  Assign the following roles:
+4.  Assign the following roles to the service account at the **Project Level**:
     - `Compute Instance Admin (v1)`
     - `Service Account User`
     - `Compute OS Login` (Mandatory if OS Login is enabled on your VM)
-    - `IAP-secured Tunnel User` (Mandatory if your VM doesn't have a public IP or is behind a firewall)
+    - `IAP-secured Tunnel User` (Mandatory for the `--tunnel-through-iap` flag)
 5.  Create a JSON Key for this service account and download it.
 
 ### 2. GitHub Secrets setup
