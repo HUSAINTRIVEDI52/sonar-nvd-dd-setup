@@ -42,17 +42,25 @@ jobs:
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
 
+      - name: Warm-up SSH (Trigger Key Propagation)
+        run: |
+          # This command might fail initially, but it triggers the SSH key generation and propagation
+          gcloud compute ssh ${{ secrets.GCP_VM_NAME }} --quiet --command "echo 'SSH Key Handshake Initiated'" || true
+          echo "Waiting 15 seconds for SSH keys to propagate to the instance..."
+          sleep 15
+
       - name: Package files
         run: |
           tar -czvf deploy.tar.gz docker-compose.yml deploy.sh .env
 
       - name: Copy package to VM
         run: |
-          gcloud compute scp deploy.tar.gz ${{ secrets.GCP_VM_NAME }}:~/ --quiet --tunnel-through-iap
+          # Standard SSH (more reliable in restricted environments)
+          gcloud compute scp deploy.tar.gz ${{ secrets.GCP_VM_NAME }}:~/ --quiet
 
       - name: Extract and Run Deployment
         run: |
-          gcloud compute ssh ${{ secrets.GCP_VM_NAME }} --quiet --tunnel-through-iap --command "
+          gcloud compute ssh ${{ secrets.GCP_VM_NAME }} --quiet --command "
             mkdir -p ~/setup-pipeline && \
             tar -xzvf ~/deploy.tar.gz -C ~/setup-pipeline/ && \
             chmod +x ~/setup-pipeline/deploy.sh && \

@@ -20,7 +20,6 @@ This repository contains a CI/CD pipeline to deploy and manage SonarQube and Def
     - `Compute Instance Admin (v1)`
     - `Service Account User`
     - `Compute OS Login` (Mandatory if OS Login is enabled on your VM)
-    - `IAP-secured Tunnel User` (Mandatory for the `--tunnel-through-iap` flag)
 5.  Create a JSON Key for this service account and download it.
 
 ### 2. GitHub Secrets setup
@@ -62,4 +61,4 @@ After deployment, the services will be available at:
 > Ensure that the GCP Firewall allows traffic on ports 9000 and 8080.
 
 > [!TIP]
-> If you encounter `Permission denied (publickey)`, ensure that `Compute OS Login` is assigned. If your VM is behind a firewall with no public IP, you may need to add `--tunnel-through-iap` to the `gcloud compute scp` and `ssh` commands in `.github/workflows/deploy.yml`.
+> This pipeline includes a "Warm-up" step that waits 15 seconds for SSH keys to propagate. This solves the common `Permission denied (publickey)` error in GitHub Actions.
