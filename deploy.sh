@@ -18,10 +18,7 @@ fi
 cd ~/setup-pipeline
 
 # Run Docker Compose
-echo "Stopping existing services if any..."
-sudo docker compose down --remove-orphans || true
-
-echo "Starting services (this may take a few minutes)..."
+echo "Applying configurations (Docker Compose will skip unchanged services)..."
 sudo docker compose up -d
 
 echo "----------------------------------------------"

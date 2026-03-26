@@ -36,7 +36,21 @@ jobs:
           echo "Waiting 15 seconds for SSH keys to propagate to the sandbox instance..."
           sleep 15
 
+      - name: Get Current Date for Cache
+        id: date
+        run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+
+      - name: Cache NVD Database
+        id: cache-nvd
+        uses: actions/cache@v4
+        with:
+          path: nvd_database.json
+          key: nvd-db-${{ steps.date.outputs.date }}
+          restore-keys: |
+            nvd-db-
+
       - name: Download Complete NVD Database
+        if: steps.cache-nvd.outputs.cache-hit != 'true'
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
         run: |
