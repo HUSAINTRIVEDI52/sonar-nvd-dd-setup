@@ -60,11 +60,4 @@ jobs:
 
       - name: Extract and Run Deployment
         run: |
-          gcloud compute ssh ${{ secrets.GCP_VM_NAME }} --quiet --command "
-            mkdir -p ~/setup-pipeline && \
-            tar -xzvf ~/deploy.tar.gz -C ~/setup-pipeline/ && \
-            chmod +x ~/setup-pipeline/deploy.sh && \
-            cd ~/setup-pipeline/ && \
-            ./deploy.sh && \
-            rm ~/deploy.tar.gz
-          "
+          gcloud compute ssh ${{ secrets.GCP_VM_NAME }} --quiet -- "mkdir -p ~/setup-pipeline && tar -xzvf ~/deploy.tar.gz -C ~/setup-pipeline/ && chmod +x ~/setup-pipeline/deploy.sh && cd ~/setup-pipeline/ && ./deploy.sh && rm ~/deploy.tar.gz"
