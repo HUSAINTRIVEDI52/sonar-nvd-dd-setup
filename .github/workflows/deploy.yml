@@ -51,13 +51,27 @@ jobs:
 
       - name: Package files
         run: |
-          tar -czvf deploy.tar.gz docker-compose.yml deploy.sh .env
+          cat << 'EOF' > remote_exec.sh
+          #!/bin/bash
+          set -e
+          echo "Starting remote execution..."
+          mkdir -p $HOME/setup-pipeline
+          tar -xzvf $HOME/deploy.tar.gz -C $HOME/setup-pipeline/
+          chmod +x $HOME/setup-pipeline/deploy.sh
+          cd $HOME/setup-pipeline/
+          ./deploy.sh
+          rm -f $HOME/deploy.tar.gz remote_exec.sh
+          echo "Deployment successful!"
+          EOF
+          chmod +x remote_exec.sh
+          tar -czvf deploy.tar.gz docker-compose.yml deploy.sh .env remote_exec.sh
 
       - name: Copy package to VM
         run: |
           # Standard SSH (more reliable in restricted environments)
-          gcloud compute scp deploy.tar.gz ${{ secrets.GCP_VM_NAME }}:~/ --quiet
+          gcloud compute scp deploy.tar.gz ${{ secrets.GCP_VM_NAME }}:~/
 
       - name: Extract and Run Deployment
         run: |
-          gcloud compute ssh ${{ secrets.GCP_VM_NAME }} --quiet -- "mkdir -p ~/setup-pipeline && tar -xzvf ~/deploy.tar.gz -C ~/setup-pipeline/ && chmod +x ~/setup-pipeline/deploy.sh && cd ~/setup-pipeline/ && ./deploy.sh && rm ~/deploy.tar.gz"
+          gcloud compute ssh ${{ secrets.GCP_VM_NAME }} --command "tar -xzvf \$HOME/deploy.tar.gz remote_exec.sh && bash remote_exec.sh"
+
