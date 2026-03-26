@@ -29,25 +29,18 @@ jobs:
           echo "DD_SECRET_KEY=${{ secrets.DD_SECRET_KEY }}" >> .env
           echo "NVD_API_KEY=${{ secrets.NVD_API_KEY }}" >> .env
 
-      - name: Pre-flight Check
-        run: |
-          if [ -z "${{ secrets.GCP_PROJECT_ID }}" ]; then echo "Error: GCP_PROJECT_ID is not set"; exit 1; fi
-          if [ -z "${{ secrets.GCP_VM_NAME }}" ]; then echo "Error: GCP_VM_NAME is not set"; exit 1; fi
-          if [ -z "${{ secrets.GCP_ZONE }}" ]; then echo "Error: GCP_ZONE is not set"; exit 1; fi
-
       - name: Configure gcloud
         run: |
           gcloud config set project ${{ secrets.GCP_PROJECT_ID }}
           gcloud config set compute/zone ${{ secrets.GCP_ZONE }}
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
 
-      - name: Warm-up SSH (Trigger Key Propagation)
+      - name: SSH Key Warm-up (Retry Loop)
         run: |
-          # This command might fail initially, but it triggers the SSH key generation and propagation
-          gcloud compute ssh ${{ secrets.GCP_VM_NAME }} --quiet --command "echo 'SSH Key Handshake Initiated'" || true
-          echo "Waiting 15 seconds for SSH keys to propagate to the instance..."
-          sleep 15
+          echo "Attempting to connect to VM and propagate SSH keys..."
+          for i in {1..10}; do
+            gcloud compute ssh ${{ secrets.GCP_VM_NAME }} --quiet --tunnel-through-iap --command="echo 'Connection successful'" && break || \
+            (echo "Retrying in 10 seconds... ($i/10)" && sleep 10)
+          done
 
       - name: Package files
         run: |
@@ -68,8 +61,8 @@ jobs:
 
       - name: Copy package to VM
         run: |
-          gcloud compute scp deploy.tar.gz remote_exec.sh ${{ secrets.GCP_VM_NAME }}:~/
+          gcloud compute scp --quiet --tunnel-through-iap deploy.tar.gz remote_exec.sh ${{ secrets.GCP_VM_NAME }}:~/
 
       - name: Extract and Run Deployment
         run: |
-          gcloud compute ssh ${{ secrets.GCP_VM_NAME }} --command "bash ~/remote_exec.sh"
+          gcloud compute ssh ${{ secrets.GCP_VM_NAME }} --quiet --tunnel-through-iap --command "bash ~/remote_exec.sh"

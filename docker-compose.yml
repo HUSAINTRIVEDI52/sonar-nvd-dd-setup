@@ -1,26 +1,7 @@
 version: '3.8'
 
 services:
-  # SonarQube
-  sonarqube:
-    image: sonarqube:lts-community
-    container_name: sonarqube
-    ports:
-      - "9000:9000"
-    networks:
-      - devsecops
-    environment:
-      - SONAR_JDBC_URL=jdbc:postgresql://db:5432/sonar
-      - SONAR_JDBC_USERNAME=sonar
-      - SONAR_JDBC_PASSWORD=${SONAR_DB_PASSWORD}
-    volumes:
-      - sonarqube_data:/opt/sonarqube/data
-      - sonarqube_extensions:/opt/sonarqube/extensions
-      - sonarqube_logs:/opt/sonarqube/logs
-    depends_on:
-      - db
-
-  # Database for both SonarQube and DefectDojo (Simplified)
+  # Database for both SonarQube and DefectDojo
   db:
     image: postgres:15
     container_name: devsecops-db
@@ -37,11 +18,27 @@ services:
       timeout: 5s
       retries: 5
 
-  # DefectDojo (Simplified version of the official compose)
-  # In a production setup, DefectDojo has many more components (uwsgi, django, workers, celery, redis/rabbitmq)
-  # For this task, I'll provide a functional simplified version or use the official docker-compose with some tweaks.
-  # Let's use a more robust DefectDojo setup.
-  
+  # SonarQube
+  sonarqube:
+    image: sonarqube:lts-community
+    container_name: sonarqube
+    ports:
+      - "9000:9000"
+    networks:
+      - devsecops
+    environment:
+      - SONAR_JDBC_URL=jdbc:postgresql://db:5432/postgres
+      - SONAR_JDBC_USERNAME=postgres
+      - SONAR_JDBC_PASSWORD=${DB_PASSWORD}
+    volumes:
+      - sonarqube_data:/opt/sonarqube/data
+      - sonarqube_extensions:/opt/sonarqube/extensions
+      - sonarqube_logs:/opt/sonarqube/logs
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # DefectDojo Core
   defectdojo:
     image: defectdojo/defectdojo-django:latest
     container_name: defectdojo
@@ -50,12 +47,32 @@ services:
     networks:
       - devsecops
     environment:
-      - DD_DATABASE_URL=postgres://dojo:${DOJO_DB_PASSWORD}@db:5432/dojo
+      - DD_DATABASE_URL=postgres://postgres:${DB_PASSWORD}@db:5432/postgres
       - DD_SECRET_KEY=${DD_SECRET_KEY}
       - DD_NVD_API_KEY=${NVD_API_KEY}
+      - DD_CELERY_BROKER_URL=redis://redis:6379/0
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
+
+  # DefectDojo Worker (Required for NVD sync and report processing)
+  defectdojo-worker:
+    image: defectdojo/defectdojo-django:latest
+    container_name: defectdojo-worker
+    command: /usr/local/bin/uwsgi --bundle-uwsgi-worker-all-apps --entry-point defectdojo.celery:app
+    networks:
+      - devsecops
+    environment:
+      - DD_DATABASE_URL=postgres://postgres:${DB_PASSWORD}@db:5432/postgres
+      - DD_CELERY_BROKER_URL=redis://redis:6379/0
+      - DD_SECRET_KEY=${DD_SECRET_KEY}
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_started
 
   redis:
     image: redis:7
@@ -72,4 +89,3 @@ volumes:
   sonarqube_extensions:
   sonarqube_logs:
   postgres_data:
-  defectdojo_data:

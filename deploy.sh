@@ -1,10 +1,11 @@
 #!/bin/bash
+set -e
 
 # Update and install dependencies
 sudo apt-get update
 sudo apt-get install -y ca-certificates curl gnupg lsb-release
 
-# Install Docker using the official convenience script
+# Install Docker if not present
 if ! command -v docker &> /dev/null
 then
     echo "Installing Docker..."
@@ -14,17 +15,16 @@ then
 fi
 
 # Navigate to project directory
-mkdir -p ~/setup-pipeline
 cd ~/setup-pipeline
-
-# Ensure .env is set up (This assumes environment variables are passed through SSH or generated)
-# The GitHub Action will handle copying the .env file
 
 # Run Docker Compose
 echo "Stopping existing services if any..."
 sudo docker compose down --remove-orphans || true
 
-echo "Starting services..."
+echo "Starting services (this may take a few minutes)..."
 sudo docker compose up -d
 
-echo "SonarQube and DefectDojo deployed successfully!"
+echo "----------------------------------------------"
+echo "SonarQube: http://$(curl -s ifconfig.me):9000"
+echo "DefectDojo: http://$(curl -s ifconfig.me):8080"
+echo "----------------------------------------------"
