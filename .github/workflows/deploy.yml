@@ -35,17 +35,24 @@ jobs:
           if [ -z "${{ secrets.GCP_VM_NAME }}" ]; then echo "Error: GCP_VM_NAME is not set"; exit 1; fi
           if [ -z "${{ secrets.GCP_ZONE }}" ]; then echo "Error: GCP_ZONE is not set"; exit 1; fi
 
+      - name: Configure gcloud
+        run: |
+          gcloud config set project ${{ secrets.GCP_PROJECT_ID }}
+          gcloud config set compute/zone ${{ secrets.GCP_ZONE }}
+          mkdir -p ~/.ssh
+          chmod 700 ~/.ssh
+
       - name: Package files
         run: |
           tar -czvf deploy.tar.gz docker-compose.yml deploy.sh .env
 
       - name: Copy package to VM
         run: |
-          gcloud compute scp deploy.tar.gz ${{ secrets.GCP_VM_NAME }}:~/ --project=${{ secrets.GCP_PROJECT_ID }} --zone=${{ secrets.GCP_ZONE }} --quiet --tunnel-through-iap
+          gcloud compute scp deploy.tar.gz ${{ secrets.GCP_VM_NAME }}:~/ --quiet --tunnel-through-iap
 
       - name: Extract and Run Deployment
         run: |
-          gcloud compute ssh ${{ secrets.GCP_VM_NAME }} --project=${{ secrets.GCP_PROJECT_ID }} --zone=${{ secrets.GCP_ZONE }} --quiet --tunnel-through-iap --command "
+          gcloud compute ssh ${{ secrets.GCP_VM_NAME }} --quiet --tunnel-through-iap --command "
             mkdir -p ~/setup-pipeline && \
             tar -xzvf ~/deploy.tar.gz -C ~/setup-pipeline/ && \
             chmod +x ~/setup-pipeline/deploy.sh && \
