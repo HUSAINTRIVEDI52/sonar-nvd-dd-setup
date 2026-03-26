@@ -29,10 +29,27 @@ jobs:
           echo "DD_SECRET_KEY=${{ secrets.DD_SECRET_KEY }}" >> .env
           echo "NVD_API_KEY=${{ secrets.NVD_API_KEY }}" >> .env
 
-      - name: Copy files to VM
+      - name: Pre-flight Check
         run: |
-          gcloud compute scp --quiet --tunnel-through-iap --project=${{ secrets.GCP_PROJECT_ID }} docker-compose.yml deploy.sh .env ${{ secrets.GCP_VM_NAME }}:~/setup-pipeline/ --zone ${{ secrets.GCP_ZONE }}
+          if [ -z "${{ secrets.GCP_PROJECT_ID }}" ]; then echo "Error: GCP_PROJECT_ID is not set"; exit 1; fi
+          if [ -z "${{ secrets.GCP_VM_NAME }}" ]; then echo "Error: GCP_VM_NAME is not set"; exit 1; fi
+          if [ -z "${{ secrets.GCP_ZONE }}" ]; then echo "Error: GCP_ZONE is not set"; exit 1; fi
 
-      - name: Run Deployment Script
+      - name: Package files
         run: |
-          gcloud compute ssh --quiet --tunnel-through-iap --project=${{ secrets.GCP_PROJECT_ID }} ${{ secrets.GCP_VM_NAME }} --zone ${{ secrets.GCP_ZONE }} --command "chmod +x ~/setup-pipeline/deploy.sh && ~/setup-pipeline/deploy.sh"
+          tar -czvf deploy.tar.gz docker-compose.yml deploy.sh .env
+
+      - name: Copy package to VM
+        run: |
+          gcloud compute scp deploy.tar.gz ${{ secrets.GCP_VM_NAME }}:~/ --project=${{ secrets.GCP_PROJECT_ID }} --zone=${{ secrets.GCP_ZONE }} --quiet --tunnel-through-iap
+
+      - name: Extract and Run Deployment
+        run: |
+          gcloud compute ssh ${{ secrets.GCP_VM_NAME }} --project=${{ secrets.GCP_PROJECT_ID }} --zone=${{ secrets.GCP_ZONE }} --quiet --tunnel-through-iap --command "
+            mkdir -p ~/setup-pipeline && \
+            tar -xzvf ~/deploy.tar.gz -C ~/setup-pipeline/ && \
+            chmod +x ~/setup-pipeline/deploy.sh && \
+            cd ~/setup-pipeline/ && \
+            ./deploy.sh && \
+            rm ~/deploy.tar.gz
+          "

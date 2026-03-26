@@ -33,6 +33,10 @@ cd ~/setup-pipeline
 # The GitHub Action will handle copying the .env file
 
 # Run Docker Compose
+echo "Stopping existing services if any..."
+sudo docker compose down --remove-orphans || true
+
+echo "Starting services..."
 sudo docker compose up -d
 
 echo "SonarQube and DefectDojo deployed successfully!"
