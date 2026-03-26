@@ -42,8 +42,9 @@ jobs:
         run: |
           cat << 'EOF' > download_nvd.py
           import os, requests, json, time
-          api_key = os.getenv('NVD_API_KEY')
+          api_key = os.getenv('NVD_API_KEY', '').strip()
           headers = {'apiKey': api_key} if api_key else {}
+
           base_url = "https://services.nvd.nist.gov/rest/json/cves/2.0"
           start_index = 0
           results_per_page = 2000
