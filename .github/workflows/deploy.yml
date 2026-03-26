@@ -18,51 +18,40 @@ jobs:
         with:
           credentials_json: ${{ secrets.GCP_SA_KEY }}
 
-      - name: Set up gcloud Cloud SDK
+      - name: Set up gcloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
-      - name: Generate .env file
+      - name: Configure gcloud Project
         run: |
+          gcloud config set project ${{ secrets.GCP_PROJECT_ID }}
+          gcloud config set compute/zone ${{ secrets.GCP_ZONE }}
+
+      - name: Generate .env and Package
+        run: |
+          # Create the .env file with secrets
           echo "SONAR_DB_PASSWORD=${{ secrets.SONAR_DB_PASSWORD }}" > .env
           echo "DB_PASSWORD=${{ secrets.DB_PASSWORD }}" >> .env
           echo "DOJO_DB_PASSWORD=${{ secrets.DOJO_DB_PASSWORD }}" >> .env
           echo "DD_SECRET_KEY=${{ secrets.DD_SECRET_KEY }}" >> .env
           echo "NVD_API_KEY=${{ secrets.NVD_API_KEY }}" >> .env
-
-      - name: Configure gcloud
-        run: |
-          gcloud config set project ${{ secrets.GCP_PROJECT_ID }}
-          gcloud config set compute/zone ${{ secrets.GCP_ZONE }}
-
-      - name: SSH Key Warm-up (Retry Loop)
-        run: |
-          echo "Attempting to connect to VM and propagate SSH keys..."
-          for i in {1..10}; do
-            gcloud compute ssh ${{ secrets.GCP_VM_NAME }} --quiet --tunnel-through-iap --command="echo 'Connection successful'" && break || \
-            (echo "Retrying in 10 seconds... ($i/10)" && sleep 10)
-          done
-
-      - name: Package files
-        run: |
-          cat << 'EOF' > remote_exec.sh
-          #!/bin/bash
-          set -e
-          echo "Starting remote execution..."
-          mkdir -p ~/setup-pipeline
-          tar -xzvf ~/deploy.tar.gz -C ~/setup-pipeline/
-          chmod +x ~/setup-pipeline/deploy.sh
-          cd ~/setup-pipeline/
-          ./deploy.sh
-          rm -f ~/deploy.tar.gz ~/remote_exec.sh
-          echo "Deployment successful!"
-          EOF
-          chmod +x remote_exec.sh
+          
+          # Bundle everything into a single archive
           tar -czvf deploy.tar.gz docker-compose.yml deploy.sh .env
 
-      - name: Copy package to VM
+      - name: Transfer Package to VM
         run: |
-          gcloud compute scp --quiet --tunnel-through-iap deploy.tar.gz remote_exec.sh ${{ secrets.GCP_VM_NAME }}:~/
+          # Use IAP tunneling to bypass SSH key/firewall issues
+          gcloud compute scp --quiet --tunnel-through-iap deploy.tar.gz ${{ secrets.GCP_VM_NAME }}:~/
 
-      - name: Extract and Run Deployment
+      - name: Execute Deployment on VM
         run: |
-          gcloud compute ssh ${{ secrets.GCP_VM_NAME }} --quiet --tunnel-through-iap --command "bash ~/remote_exec.sh"
+          # Unpack and run the deployment script via IAP tunnel
+          gcloud compute ssh ${{ secrets.GCP_VM_NAME }} --quiet --tunnel-through-iap --command "
+            set -e
+            mkdir -p ~/setup-pipeline
+            tar -xzvf ~/deploy.tar.gz -C ~/setup-pipeline/
+            chmod +x ~/setup-pipeline/deploy.sh
+            cd ~/setup-pipeline/
+            ./deploy.sh
+            rm -f ~/deploy.tar.gz
+          "
