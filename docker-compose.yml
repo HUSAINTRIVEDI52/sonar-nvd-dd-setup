@@ -10,6 +10,7 @@ services:
     environment:
       - POSTGRES_USER=postgres
       - POSTGRES_PASSWORD=${DB_PASSWORD}
+      - POSTGRES_DB=postgres
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init-db.sh:/docker-entrypoint-initdb.d/init-db.sh
@@ -21,7 +22,7 @@ services:
 
   # SonarQube
   sonarqube:
-    image: sonarqube:latest
+    image: sonarqube:community
     container_name: sonarqube
     ports:
       - "9000:9000"
@@ -35,72 +36,150 @@ services:
       - sonarqube_data:/opt/sonarqube/data
       - sonarqube_extensions:/opt/sonarqube/extensions
       - sonarqube_logs:/opt/sonarqube/logs
+    ulimits:
+      nofile:
+        soft: 65536
+        hard: 65536
     depends_on:
       db:
         condition: service_healthy
 
-  # DefectDojo Core
+  # Redis for DefectDojo
+  redis:
+    image: redis:7-alpine
+    container_name: devsecops-redis
+    networks:
+      - devsecops
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # DefectDojo Initializer (One-time setup)
+  defectdojo-initializer:
+    image: defectdojo/defectdojo-django:latest
+    container_name: defectdojo-initializer
+    networks:
+      - devsecops
+    environment:
+      - DD_DATABASE_URL=postgresql://postgres:${DB_PASSWORD}@db:5432/defectdojo
+      - DD_SECRET_KEY=${DD_SECRET_KEY}
+      - DD_ALLOWED_HOSTS=*
+      - DD_ADMIN_USER=admin
+      - DD_ADMIN_PASSWORD=${DD_ADMIN_PASSWORD:-admin}
+      - DD_CELERY_BROKER_URL=redis://redis:6379/0
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        set -e
+        echo "Waiting for database..."
+        until python manage.py check --database default 2>&1; do
+          echo "Database not ready, waiting..."
+          sleep 2
+        done
+        echo "Running migrations..."
+        python manage.py migrate --noinput
+        echo "Creating admin user..."
+        python manage.py createsuperuser --noinput --username admin --email admin@admin.com || echo "Admin user already exists"
+        echo "Loading initial data..."
+        python manage.py loaddata product_type || true
+        python manage.py loaddata test_type || true
+        python manage.py loaddata development_environment || true
+        python manage.py loaddata system_settings || true
+        echo "Creating initial groups and permissions..."
+        python manage.py create_groups || true
+        python manage.py initialize_permissions || true
+        echo "DefectDojo initialization complete!"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: "no"
+
+  # DefectDojo Core Application
   defectdojo:
     image: defectdojo/defectdojo-django:latest
     container_name: defectdojo
     networks:
       - devsecops
     volumes:
-      - defectdojo_static:/var/www/defectdojo/static
-      - defectdojo_media:/var/www/defectdojo/media
+      - defectdojo_media:/app/media
     environment:
-      - DD_DATABASE_URL=postgres://postgres:${DB_PASSWORD}@db:5432/defectdojo
+      - DD_DATABASE_URL=postgresql://postgres:${DB_PASSWORD}@db:5432/defectdojo
       - DD_SECRET_KEY=${DD_SECRET_KEY}
-      - DD_NVD_API_KEY=${NVD_API_KEY}
       - DD_CELERY_BROKER_URL=redis://redis:6379/0
       - DD_ALLOWED_HOSTS=*
-      - DD_UWSGI_PASS_PORT=3031
+      - DD_ADMIN_USER=admin
+      - DD_ADMIN_PASSWORD=${DD_ADMIN_PASSWORD:-admin}
+      - DD_UWSGI_PASS=uwsgi://defectdojo:3031
+      - DD_UWSGI_ENDPOINT=defectdojo:3031
     depends_on:
       db:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
+      defectdojo-initializer:
+        condition: service_completed_successfully
 
-  # DefectDojo Worker (Required for NVD sync and report processing)
+  # DefectDojo Celery Worker (For background tasks and NVD sync)
   defectdojo-worker:
     image: defectdojo/defectdojo-django:latest
     container_name: defectdojo-worker
-    command: /usr/local/bin/uwsgi --bundle-uwsgi-worker-all-apps --entry-point defectdojo.celery:app
+    command: celery -A dojo worker -l info --concurrency 3
     networks:
       - devsecops
     volumes:
-      - defectdojo_static:/var/www/defectdojo/static
-      - defectdojo_media:/var/www/defectdojo/media
+      - defectdojo_media:/app/media
     environment:
-      - DD_DATABASE_URL=postgres://postgres:${DB_PASSWORD}@db:5432/defectdojo
+      - DD_DATABASE_URL=postgresql://postgres:${DB_PASSWORD}@db:5432/defectdojo
       - DD_CELERY_BROKER_URL=redis://redis:6379/0
       - DD_SECRET_KEY=${DD_SECRET_KEY}
-      - DD_NVD_API_KEY=${NVD_API_KEY}
       - DD_ALLOWED_HOSTS=*
     depends_on:
       db:
         condition: service_healthy
       redis:
-        condition: service_started
+        condition: service_healthy
+      defectdojo-initializer:
+        condition: service_completed_successfully
 
-  redis:
-    image: redis:7
-    container_name: devsecops-redis
+  # DefectDojo Celery Beat (For scheduled tasks)
+  defectdojo-beat:
+    image: defectdojo/defectdojo-django:latest
+    container_name: defectdojo-beat
+    command: celery -A dojo beat -l info
     networks:
       - devsecops
+    volumes:
+      - defectdojo_media:/app/media
+    environment:
+      - DD_DATABASE_URL=postgresql://postgres:${DB_PASSWORD}@db:5432/defectdojo
+      - DD_CELERY_BROKER_URL=redis://redis:6379/0
+      - DD_SECRET_KEY=${DD_SECRET_KEY}
+      - DD_ALLOWED_HOSTS=*
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      defectdojo-initializer:
+        condition: service_completed_successfully
 
-  # DefectDojo Nginx Proxy (Required for UI and static files)
+  # DefectDojo Nginx Reverse Proxy
   defectdojo-nginx:
     image: defectdojo/defectdojo-nginx:latest
     container_name: defectdojo-nginx
     ports:
       - "8080:8080"
     environment:
-      - DD_UWSGI_HOST=defectdojo
-      - DD_UWSGI_PORT=3031
+      - NGINX_METRICS_ENABLED=false
+      - USE_TLS=false
+      - DD_UWSGI_PASS=defectdojo:3031
     volumes:
-      - defectdojo_static:/var/www/defectdojo/static
-      - defectdojo_media:/var/www/defectdojo/media
+      - defectdojo_media:/app/media
     networks:
       - devsecops
     depends_on:
@@ -115,5 +194,4 @@ volumes:
   sonarqube_extensions:
   sonarqube_logs:
   postgres_data:
-  defectdojo_static:
   defectdojo_media:
