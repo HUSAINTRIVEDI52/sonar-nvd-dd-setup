@@ -1,149 +1,124 @@
-name: Deploy to GCP VM
+#!/bin/bash
+set -e
 
-on:
-  push:
-    branches:
-      - main
-      - test
+echo "=================================================="
+echo "DevSecOps Pipeline Deployment Script"
+echo "=================================================="
 
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout Code
-        uses: actions/checkout@v4
+# Step 1: Install system dependencies
+echo "Step 1: Installing system dependencies..."
+sudo apt-get update -qq
+sudo apt-get install -y -qq ca-certificates curl gnupg lsb-release
 
-      # ── GCP Auth via SA key JSON + project ID only ──────────────────────────
-      - name: Authenticate to GCP
-        uses: google-github-actions/auth@v2
-        with:
-          credentials_json: ${{ secrets.GCP_SA_KEY }}
+# Step 2: Install Docker if not present
+if ! command -v docker &> /dev/null; then
+    echo "Step 2: Installing Docker..."
+    curl -fsSL https://get.docker.com -o get-docker.sh
+    sudo sh get-docker.sh
+    rm get-docker.sh
+    sudo usermod -aG docker $USER
+else
+    echo "Step 2: Docker already installed, skipping."
+fi
 
-      - name: Set up gcloud SDK
-        uses: google-github-actions/setup-gcloud@v2
+# Check docker compose
+if ! docker compose version &> /dev/null; then
+    echo "ERROR: docker compose is not available."
+    exit 1
+fi
 
-      - name: Configure gcloud Project
-        run: |
-          gcloud config set project ${{ secrets.GCP_PROJECT_ID }}
-          gcloud config set compute/zone ${{ secrets.GCP_ZONE }}
-          mkdir -p ~/.ssh
-          chmod 700 ~/.ssh
+# Navigate to project directory
+cd ~/setup-pipeline || { echo "ERROR: Directory ~/setup-pipeline not found"; exit 1; }
 
-      # ── SSH warm-up (sandbox metadata key propagation) ──────────────────────
-      - name: Warm-up SSH (Trigger Key Propagation)
-        run: |
-          gcloud compute ssh ${{ secrets.GCP_VM_NAME }} \
-            --project ${{ secrets.GCP_PROJECT_ID }} \
-            --zone ${{ secrets.GCP_ZONE }} \
-            --quiet \
-            --command "echo 'SSH Key Handshake Initiated'" || true
-          echo "Waiting 15 seconds for SSH keys to propagate..."
-          sleep 15
+# Step 3: Configure kernel parameters for SonarQube
+echo "Step 3: Configuring kernel parameters for SonarQube..."
+sudo sysctl -w vm.max_map_count=262144
+sudo sysctl -w fs.file-max=65536
+echo "vm.max_map_count=262144" | sudo tee /etc/sysctl.d/99-sonarqube.conf > /dev/null
+echo "fs.file-max=65536" | sudo tee -a /etc/sysctl.d/99-sonarqube.conf > /dev/null
+ulimit -n 65536 || true
 
-      # ── NVD database caching ─────────────────────────────────────────────────
-      - name: Get Current Date for Cache
-        id: date
-        run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+# Step 4: Load environment variables
+if [ -f .env ]; then
+    echo "Step 4: Loading environment variables..."
+    set -a
+    source .env
+    set +a
+else
+    echo "WARNING: .env file not found."
+fi
 
-      - name: Cache NVD Database
-        id: cache-nvd
-        uses: actions/cache@v4
-        with:
-          path: nvd_database.json
-          key: nvd-db-${{ steps.date.outputs.date }}
-          restore-keys: |
-            nvd-db-
+# Validate required variables
+for var in DB_PASSWORD DD_SECRET_KEY; do
+    if [ -z "${!var}" ]; then
+        echo "ERROR: Required environment variable $var is not set"
+        exit 1
+    fi
+done
 
-      - name: Download Complete NVD Database
-        if: steps.cache-nvd.outputs.cache-hit != 'true'
-        env:
-          NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
-        run: |
-          cat << 'EOF' > download_nvd.py
-          import os, requests, json, time
-          api_key = os.getenv('NVD_API_KEY', '').strip()
-          headers = {'apiKey': api_key} if api_key else {}
+# Step 5: Clean up existing containers and volumes for fresh start
+echo "Step 5: Cleaning up existing containers..."
+sudo docker compose down -v --remove-orphans || true
 
-          base_url = "https://services.nvd.nist.gov/rest/json/cves/2.0"
-          start_index = 0
-          results_per_page = 2000
-          with open('nvd_database.json', 'w') as f:
-              f.write('{"vulnerabilities": [\n')
-              first = True
-              while True:
-                  try:
-                      url = f"{base_url}?startIndex={start_index}&resultsPerPage={results_per_page}"
-                      print(f"Fetching {start_index}...", flush=True)
-                      response = requests.get(url, headers=headers, timeout=30)
-                      if response.status_code in [403, 503, 429, 502, 504]:
-                          print(f"Rate limited ({response.status_code}), sleeping 15s...", flush=True)
-                          time.sleep(15)
-                          continue
-                      response.raise_for_status()
-                      data = response.json()
-                      cves = data.get('vulnerabilities', [])
-                      for cve in cves:
-                          if not first: f.write(',\n')
-                          json.dump(cve, f)
-                          first = False
-                      total_results = data.get('totalResults', 0)
-                      start_index += len(cves)
-                      if start_index >= total_results or len(cves) == 0: break
-                      time.sleep(1)
-                  except Exception as e:
-                      print(f"Error: {e}. Retrying in 10s...", flush=True)
-                      time.sleep(10)
-              f.write('\n]}')
-          print(f"Downloaded {start_index} CVEs to nvd_database.json")
-          EOF
-          pip3 install requests
-          python3 download_nvd.py
+# Step 6: Start PostgreSQL first
+echo "Step 6: Starting PostgreSQL database..."
+sudo docker compose up -d db
 
-      # ── Build & transfer package ─────────────────────────────────────────────
-      - name: Generate .env and Package
-        run: |
-          # Write .env from secrets
-          cat > .env << EOF
-          DB_PASSWORD=${{ secrets.DB_PASSWORD }}
-          DD_SECRET_KEY=${{ secrets.DD_SECRET_KEY }}
-          DD_ADMIN_PASSWORD=${{ secrets.DD_ADMIN_PASSWORD }}
-          NVD_API_KEY=${{ secrets.NVD_API_KEY }}
-          EOF
+# Step 7: Wait for database to be healthy
+echo "Step 7: Waiting for database to be ready..."
+attempt=0
+max_attempts=30
+until [ "$(sudo docker inspect -f '{{.State.Health.Status}}' devsecops-db 2>/dev/null)" = "healthy" ]; do
+    attempt=$((attempt + 1))
+    if [ $attempt -ge $max_attempts ]; then
+        echo "ERROR: Database failed to become healthy"
+        sudo docker logs devsecops-db --tail 20
+        exit 1
+    fi
+    echo "  Waiting... ($attempt/$max_attempts)"
+    sleep 3
+done
+echo "Database is healthy!"
 
-          # Remote execution wrapper (avoids SSH inline shell-escaping issues)
-          cat << 'REOF' > remote_exec.sh
-          #!/bin/bash
-          set -e
-          echo "=== Starting remote deployment ==="
-          mkdir -p ~/setup-pipeline
-          tar -xzvf ~/deploy.tar.gz -C ~/setup-pipeline/
-          chmod +x ~/setup-pipeline/deploy.sh
-          cd ~/setup-pipeline/
-          ./deploy.sh
-          rm -f ~/deploy.tar.gz ~/remote_exec.sh
-          echo "=== Deployment successful! ==="
-          REOF
-          chmod +x remote_exec.sh
+# Step 8: Create required databases
+echo "Step 8: Creating SonarQube and DefectDojo databases..."
+sudo docker exec devsecops-db bash /docker-entrypoint-initdb.d/init-db.sh
 
-          # Bundle everything
-          tar -czvf deploy.tar.gz \
-            docker-compose.yml \
-            deploy.sh \
-            init-db.sh \
-            .env \
-            remote_exec.sh \
-            nvd_database.json
+# Step 9: Start Redis
+echo "Step 9: Starting Redis..."
+sudo docker compose up -d redis
 
-      - name: Transfer Package to VM
-        run: |
-          gcloud compute scp deploy.tar.gz remote_exec.sh init-db.sh \
-            ${{ secrets.GCP_VM_NAME }}:~/ \
-            --project ${{ secrets.GCP_PROJECT_ID }} \
-            --zone ${{ secrets.GCP_ZONE }}
+attempt=0
+until [ "$(sudo docker inspect -f '{{.State.Health.Status}}' devsecops-redis 2>/dev/null)" = "healthy" ]; do
+    attempt=$((attempt + 1))
+    if [ $attempt -ge 20 ]; then
+        echo "ERROR: Redis failed to become healthy"
+        exit 1
+    fi
+    sleep 2
+done
+echo "Redis is healthy!"
 
-      - name: Execute Deployment on VM
-        run: |
-          gcloud compute ssh ${{ secrets.GCP_VM_NAME }} \
-            --project ${{ secrets.GCP_PROJECT_ID }} \
-            --zone ${{ secrets.GCP_ZONE }} \
-            --command "bash ~/remote_exec.sh"
+# Step 10: Run DefectDojo initializer (migrations, admin user, fixtures)
+echo "Step 10: Running DefectDojo initializer..."
+sudo docker compose up defectdojo-initializer
+echo "DefectDojo initialization complete!"
+
+# Step 11: Start all remaining services
+echo "Step 11: Starting all services..."
+sudo docker compose up -d
+
+# Step 12: Show status
+echo "Step 12: Checking service status..."
+sleep 10
+sudo docker compose ps
+
+EXTERNAL_IP=$(curl -s ifconfig.me || echo "YOUR_VM_IP")
+
+echo "=================================================="
+echo "Deployment Complete!"
+echo "=================================================="
+echo "SonarQube:   http://${EXTERNAL_IP}:9000  (default: admin/admin)"
+echo "DefectDojo:  http://${EXTERNAL_IP}:8080  (default: admin/admin)"
+echo "Note: Services may take 2-3 minutes to fully initialize."
+echo "=================================================="
