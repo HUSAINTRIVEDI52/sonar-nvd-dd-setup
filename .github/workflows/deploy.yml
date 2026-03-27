@@ -13,7 +13,6 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
-      # ── GCP Auth via SA key JSON + project ID only ──────────────────────────
       - name: Authenticate to GCP
         uses: google-github-actions/auth@v2
         with:
@@ -29,7 +28,6 @@ jobs:
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
 
-      # ── SSH warm-up (sandbox metadata key propagation) ──────────────────────
       - name: Warm-up SSH (Trigger Key Propagation)
         run: |
           gcloud compute ssh ${{ secrets.GCP_VM_NAME }} \
@@ -40,7 +38,6 @@ jobs:
           echo "Waiting 15 seconds for SSH keys to propagate..."
           sleep 15
 
-      # ── NVD database caching ─────────────────────────────────────────────────
       - name: Get Current Date for Cache
         id: date
         run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
@@ -59,11 +56,10 @@ jobs:
         env:
           NVD_API_KEY: ${{ secrets.NVD_API_KEY }}
         run: |
-          cat << 'EOF' > download_nvd.py
+          python3 - << 'PYEOF'
           import os, requests, json, time
           api_key = os.getenv('NVD_API_KEY', '').strip()
           headers = {'apiKey': api_key} if api_key else {}
-
           base_url = "https://services.nvd.nist.gov/rest/json/cves/2.0"
           start_index = 0
           results_per_page = 2000
@@ -95,36 +91,15 @@ jobs:
                       time.sleep(10)
               f.write('\n]}')
           print(f"Downloaded {start_index} CVEs to nvd_database.json")
-          EOF
-          pip3 install requests
-          python3 download_nvd.py
+          PYEOF
 
-      # ── Build & transfer package ─────────────────────────────────────────────
       - name: Generate .env and Package
         run: |
-          # Write .env from secrets using echo (heredoc breaks YAML with {{ }})
           printf 'DB_PASSWORD=%s\n' '${{ secrets.DB_PASSWORD }}' > .env
           printf 'DD_SECRET_KEY=%s\n' '${{ secrets.DD_SECRET_KEY }}' >> .env
           printf 'DD_ADMIN_PASSWORD=admin\n' >> .env
           printf 'NVD_API_KEY=%s\n' '${{ secrets.NVD_API_KEY }}' >> .env
-
-          # Remote execution wrapper (avoids SSH inline shell-escaping issues)
-          cat << 'REOF' > remote_exec.sh
-#!/bin/bash
-set -e
-echo "=== Starting remote deployment ==="
-mkdir -p ~/setup-pipeline
-tar -xzvf ~/deploy.tar.gz -C ~/setup-pipeline/
-chmod +x ~/setup-pipeline/deploy.sh
-chmod +x ~/setup-pipeline/init-db.sh
-cd ~/setup-pipeline/
-./deploy.sh
-rm -f ~/deploy.tar.gz ~/remote_exec.sh
-echo "=== Deployment successful! ==="
-REOF
           chmod +x remote_exec.sh
-
-          # Bundle everything
           tar -czvf deploy.tar.gz \
             docker-compose.yml \
             deploy.sh \
@@ -135,7 +110,7 @@ REOF
 
       - name: Transfer Package to VM
         run: |
-          gcloud compute scp deploy.tar.gz remote_exec.sh init-db.sh \
+          gcloud compute scp deploy.tar.gz \
             ${{ secrets.GCP_VM_NAME }}:~/ \
             --project ${{ secrets.GCP_PROJECT_ID }} \
             --zone ${{ secrets.GCP_ZONE }}
