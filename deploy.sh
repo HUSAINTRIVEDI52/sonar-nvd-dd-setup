@@ -17,6 +17,11 @@ fi
 # Navigate to project directory
 cd ~/setup-pipeline
 
+# Configure host machine required settings for SonarQube Elasticsearch
+echo "Configuring kernel parameters for SonarQube..."
+sudo sysctl -w vm.max_map_count=262144
+echo "vm.max_map_count=262144" | sudo tee -a /etc/sysctl.d/99-sonarqube.conf > /dev/null
+
 # Run Docker Compose
 echo "Applying configurations (Docker Compose will skip unchanged services)..."
 sudo docker compose up -d
