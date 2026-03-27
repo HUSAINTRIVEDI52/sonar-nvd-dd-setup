@@ -12,6 +12,7 @@ services:
       - POSTGRES_PASSWORD=${DB_PASSWORD}
     volumes:
       - postgres_data:/var/lib/postgresql/data
+      - ./init-db.sh:/docker-entrypoint-initdb.d/init-db.sh
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres"]
       interval: 10s
@@ -27,7 +28,7 @@ services:
     networks:
       - devsecops
     environment:
-      - SONAR_JDBC_URL=jdbc:postgresql://db:5432/postgres
+      - SONAR_JDBC_URL=jdbc:postgresql://db:5432/sonarqube
       - SONAR_JDBC_USERNAME=postgres
       - SONAR_JDBC_PASSWORD=${DB_PASSWORD}
     volumes:
@@ -42,12 +43,13 @@ services:
   defectdojo:
     image: defectdojo/defectdojo-django:latest
     container_name: defectdojo
-    ports:
-      - "8080:8080"
     networks:
       - devsecops
+    volumes:
+      - defectdojo_static:/var/www/defectdojo/static
+      - defectdojo_media:/var/www/defectdojo/media
     environment:
-      - DD_DATABASE_URL=postgres://postgres:${DB_PASSWORD}@db:5432/postgres
+      - DD_DATABASE_URL=postgres://postgres:${DB_PASSWORD}@db:5432/defectdojo
       - DD_SECRET_KEY=${DD_SECRET_KEY}
       - DD_NVD_API_KEY=${NVD_API_KEY}
       - DD_CELERY_BROKER_URL=redis://redis:6379/0
@@ -64,8 +66,11 @@ services:
     command: /usr/local/bin/uwsgi --bundle-uwsgi-worker-all-apps --entry-point defectdojo.celery:app
     networks:
       - devsecops
+    volumes:
+      - defectdojo_static:/var/www/defectdojo/static
+      - defectdojo_media:/var/www/defectdojo/media
     environment:
-      - DD_DATABASE_URL=postgres://postgres:${DB_PASSWORD}@db:5432/postgres
+      - DD_DATABASE_URL=postgres://postgres:${DB_PASSWORD}@db:5432/defectdojo
       - DD_CELERY_BROKER_URL=redis://redis:6379/0
       - DD_SECRET_KEY=${DD_SECRET_KEY}
       - DD_NVD_API_KEY=${NVD_API_KEY}
@@ -81,6 +86,23 @@ services:
     networks:
       - devsecops
 
+  # DefectDojo Nginx Proxy (Required for UI and static files)
+  defectdojo-nginx:
+    image: defectdojo/defectdojo-nginx:latest
+    container_name: defectdojo-nginx
+    ports:
+      - "8080:8080"
+    environment:
+      - DD_UWSGI_HOST=defectdojo
+      - DD_UWSGI_PORT=3031
+    volumes:
+      - defectdojo_static:/var/www/defectdojo/static
+      - defectdojo_media:/var/www/defectdojo/media
+    networks:
+      - devsecops
+    depends_on:
+      - defectdojo
+
 networks:
   devsecops:
     driver: bridge
@@ -90,3 +112,5 @@ volumes:
   sonarqube_extensions:
   sonarqube_logs:
   postgres_data:
+  defectdojo_static:
+  defectdojo_media:

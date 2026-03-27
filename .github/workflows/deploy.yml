@@ -119,12 +119,12 @@ jobs:
           chmod +x remote_exec.sh
           
           # Bundle everything into a single archive
-          tar -czvf deploy.tar.gz docker-compose.yml deploy.sh .env remote_exec.sh nvd_database.json
+          tar -czvf deploy.tar.gz docker-compose.yml deploy.sh .env remote_exec.sh nvd_database.json init-db.sh
 
       - name: Transfer Package to VM
         run: |
           # Use standard SCP (Do NOT use IAP as sandbox IAM doesn't support it)
-          gcloud compute scp deploy.tar.gz remote_exec.sh ${{ secrets.GCP_VM_NAME }}:~/
+          gcloud compute scp deploy.tar.gz remote_exec.sh init-db.sh ${{ secrets.GCP_VM_NAME }}:~/
 
       - name: Execute Deployment on VM
         run: |
