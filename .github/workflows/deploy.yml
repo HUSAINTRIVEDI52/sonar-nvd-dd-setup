@@ -24,15 +24,24 @@ jobs:
       - name: Configure gcloud Project
         run: |
           gcloud config set project ${{ secrets.GCP_PROJECT_ID }}
-          gcloud config set compute/zone ${{ secrets.GCP_ZONE }}
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
+
+      - name: Auto-detect VM Zone
+        id: detect-zone
+        run: |
+          ZONE=$(gcloud compute instances list \
+            --project ${{ secrets.GCP_PROJECT_ID }} \
+            --filter="name=${{ secrets.GCP_VM_NAME }}" \
+            --format="value(zone)")
+          echo "Detected zone: $ZONE"
+          echo "zone=$ZONE" >> $GITHUB_OUTPUT
 
       - name: Warm-up SSH (Trigger Key Propagation)
         run: |
           gcloud compute ssh ${{ secrets.GCP_VM_NAME }} \
             --project ${{ secrets.GCP_PROJECT_ID }} \
-            --zone ${{ secrets.GCP_ZONE }} \
+            --zone ${{ steps.detect-zone.outputs.zone }} \
             --quiet \
             --command "echo 'SSH Key Handshake Initiated'" || true
           echo "Waiting 15 seconds for SSH keys to propagate..."
@@ -97,7 +106,7 @@ jobs:
         run: |
           printf 'DB_PASSWORD=%s\n' '${{ secrets.DB_PASSWORD }}' > .env
           printf 'DD_SECRET_KEY=%s\n' '${{ secrets.DD_SECRET_KEY }}' >> .env
-          printf 'DD_ADMIN_PASSWORD=admin\n' >> .env
+          printf 'DD_ADMIN_PASSWORD=Admin@123456\n' >> .env
           printf 'NVD_API_KEY=%s\n' '${{ secrets.NVD_API_KEY }}' >> .env
           chmod +x remote_exec.sh
           tar -czvf deploy.tar.gz \
@@ -113,7 +122,7 @@ jobs:
           gcloud compute scp deploy.tar.gz \
             ${{ secrets.GCP_VM_NAME }}:~/ \
             --project ${{ secrets.GCP_PROJECT_ID }} \
-            --zone ${{ secrets.GCP_ZONE }}
+            --zone ${{ steps.detect-zone.outputs.zone }}
 
       - name: Execute Deployment on VM
         run: |
