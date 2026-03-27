@@ -99,7 +99,7 @@ services:
         condition: service_healthy
     restart: "no"
 
-  # DefectDojo Core Application
+  # DefectDojo Core Application (uWSGI)
   defectdojo:
     image: defectdojo/defectdojo-django:latest
     container_name: defectdojo
@@ -114,8 +114,18 @@ services:
       - DD_ALLOWED_HOSTS=*
       - DD_ADMIN_USER=admin
       - DD_ADMIN_PASSWORD=${DD_ADMIN_PASSWORD:-admin}
-      - DD_UWSGI_PASS=uwsgi://defectdojo:3031
-      - DD_UWSGI_ENDPOINT=defectdojo:3031
+      # uWSGI socket settings — these are read by the image's entrypoint
+      - DD_UWSGI_SOCKET=/run/uwsgi/dojo.sock
+      - DD_UWSGI_ENDPOINT=0.0.0.0:3031
+    # FIX: explicit command so the image runs the uwsgi server, not a one-shot command
+    command: /bin/bash -c "uwsgi --socket 0.0.0.0:3031 --protocol=http --wsgi dojo.wsgi:application --workers 2 --threads 2 || python manage.py runserver 0.0.0.0:3031"
+    # FIX: healthcheck so nginx waits until the app is actually accepting connections
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:3031/ || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 60s
     depends_on:
       db:
         condition: service_healthy
@@ -177,13 +187,16 @@ services:
     environment:
       - NGINX_METRICS_ENABLED=false
       - USE_TLS=false
+      # FIX: nginx proxies to the http port exposed by defectdojo container
       - DD_UWSGI_PASS=defectdojo:3031
     volumes:
       - defectdojo_media:/app/media
     networks:
       - devsecops
+    # FIX: wait until defectdojo is actually healthy before nginx starts
     depends_on:
-      - defectdojo
+      defectdojo:
+        condition: service_healthy
 
 networks:
   devsecops:
