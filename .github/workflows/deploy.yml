@@ -126,7 +126,7 @@ jobs:
 
       - name: Transfer Package to VM
         run: |
-          gcloud compute scp deploy.tar.gz \
+          gcloud compute scp deploy.tar.gz remote_exec.sh \
             ${{ secrets.GCP_VM_NAME }}:~/ \
             --project ${{ secrets.GCP_PROJECT_ID }} \
             --zone ${{ steps.detect-zone.outputs.zone }}
@@ -135,5 +135,5 @@ jobs:
         run: |
           gcloud compute ssh ${{ secrets.GCP_VM_NAME }} \
             --project ${{ secrets.GCP_PROJECT_ID }} \
-            --zone ${{ secrets.GCP_ZONE }} \
+            --zone ${{ steps.detect-zone.outputs.zone }} \
             --command "bash ~/remote_exec.sh"
