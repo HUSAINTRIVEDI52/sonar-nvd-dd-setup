@@ -30,10 +30,17 @@ jobs:
       - name: Auto-detect VM Zone
         id: detect-zone
         run: |
+          echo "Looking for VM: ${{ secrets.GCP_VM_NAME }}"
           ZONE=$(gcloud compute instances list \
             --project ${{ secrets.GCP_PROJECT_ID }} \
             --filter="name=${{ secrets.GCP_VM_NAME }}" \
             --format="value(zone)")
+          if [ -z "$ZONE" ]; then
+            echo "ERROR: Could not find VM '${{ secrets.GCP_VM_NAME }}' in project '${{ secrets.GCP_PROJECT_ID }}'"
+            echo "Available VMs:"
+            gcloud compute instances list --project ${{ secrets.GCP_PROJECT_ID }}
+            exit 1
+          fi
           echo "Detected zone: $ZONE"
           echo "zone=$ZONE" >> $GITHUB_OUTPUT
 
