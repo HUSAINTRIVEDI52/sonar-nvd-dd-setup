@@ -26,6 +26,14 @@ echo "vm.max_map_count=262144" | sudo tee -a /etc/sysctl.d/99-sonarqube.conf > /
 echo "Applying configurations (Docker Compose will skip unchanged services)..."
 sudo docker compose up -d
 
+# Force database initialization (Since initdb.d only runs on first volume creation)
+echo "Ensuring databases exist..."
+sudo docker exec devsecops-db bash /docker-entrypoint-initdb.d/init-db.sh
+
+# Restart defectdojo containers to reconnect to the new database
+echo "Restarting DefectDojo components..."
+sudo docker restart defectdojo defectdojo-worker
+
 echo "----------------------------------------------"
 echo "SonarQube: http://$(curl -s ifconfig.me):9000"
 echo "DefectDojo: http://$(curl -s ifconfig.me):8080"
