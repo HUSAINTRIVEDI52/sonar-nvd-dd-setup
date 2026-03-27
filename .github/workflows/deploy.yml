@@ -13,6 +13,7 @@ jobs:
       - name: Checkout Code
         uses: actions/checkout@v4
 
+      # ── GCP Auth via SA key JSON + project ID only ──────────────────────────
       - name: Authenticate to GCP
         uses: google-github-actions/auth@v2
         with:
@@ -28,14 +29,18 @@ jobs:
           mkdir -p ~/.ssh
           chmod 700 ~/.ssh
 
+      # ── SSH warm-up (sandbox metadata key propagation) ──────────────────────
       - name: Warm-up SSH (Trigger Key Propagation)
         run: |
-          # Sandbox environments use metadata SSH keys which take time to propagate.
-          # We must trigger the key creation and wait 15 seconds before proceeding.
-          gcloud compute ssh ${{ secrets.GCP_VM_NAME }} --quiet --command "echo 'SSH Key Handshake Initiated'" || true
-          echo "Waiting 15 seconds for SSH keys to propagate to the sandbox instance..."
+          gcloud compute ssh ${{ secrets.GCP_VM_NAME }} \
+            --project ${{ secrets.GCP_PROJECT_ID }} \
+            --zone ${{ secrets.GCP_ZONE }} \
+            --quiet \
+            --command "echo 'SSH Key Handshake Initiated'" || true
+          echo "Waiting 15 seconds for SSH keys to propagate..."
           sleep 15
 
+      # ── NVD database caching ─────────────────────────────────────────────────
       - name: Get Current Date for Cache
         id: date
         run: echo "date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
@@ -71,7 +76,7 @@ jobs:
                       print(f"Fetching {start_index}...", flush=True)
                       response = requests.get(url, headers=headers, timeout=30)
                       if response.status_code in [403, 503, 429, 502, 504]:
-                          print(f"Server busy or rate limited ({response.status_code}), sleeping 15 seconds...", flush=True)
+                          print(f"Rate limited ({response.status_code}), sleeping 15s...", flush=True)
                           time.sleep(15)
                           continue
                       response.raise_for_status()
@@ -84,49 +89,61 @@ jobs:
                       total_results = data.get('totalResults', 0)
                       start_index += len(cves)
                       if start_index >= total_results or len(cves) == 0: break
-                      time.sleep(1) # NIST rate limit allows ~1.6 req/sec with an API key
+                      time.sleep(1)
                   except Exception as e:
-                      print(f"Error: {e}. Retrying in 10 seconds...", flush=True)
+                      print(f"Error: {e}. Retrying in 10s...", flush=True)
                       time.sleep(10)
               f.write('\n]}')
-          print(f"Successfully downloaded {start_index} CVEs to nvd_database.json")
+          print(f"Downloaded {start_index} CVEs to nvd_database.json")
           EOF
           pip3 install requests
           python3 download_nvd.py
 
+      # ── Build & transfer package ─────────────────────────────────────────────
       - name: Generate .env and Package
         run: |
-          # Create the .env file with secrets
-          echo "SONAR_DB_PASSWORD=${{ secrets.SONAR_DB_PASSWORD }}" > .env
-          echo "DB_PASSWORD=${{ secrets.DB_PASSWORD }}" >> .env
-          echo "DOJO_DB_PASSWORD=${{ secrets.DOJO_DB_PASSWORD }}" >> .env
-          echo "DD_SECRET_KEY=${{ secrets.DD_SECRET_KEY }}" >> .env
-          echo "NVD_API_KEY=${{ secrets.NVD_API_KEY }}" >> .env
-          
-          # Create execution script (avoids SSH inline parsing errors)
-          cat << 'EOF' > remote_exec.sh
+          # Write .env from secrets
+          cat > .env << EOF
+          DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+          DD_SECRET_KEY=${{ secrets.DD_SECRET_KEY }}
+          DD_ADMIN_PASSWORD=${{ secrets.DD_ADMIN_PASSWORD }}
+          NVD_API_KEY=${{ secrets.NVD_API_KEY }}
+          EOF
+
+          # Remote execution wrapper (avoids SSH inline shell-escaping issues)
+          cat << 'REOF' > remote_exec.sh
           #!/bin/bash
           set -e
-          echo "Starting remote execution..."
+          echo "=== Starting remote deployment ==="
           mkdir -p ~/setup-pipeline
           tar -xzvf ~/deploy.tar.gz -C ~/setup-pipeline/
           chmod +x ~/setup-pipeline/deploy.sh
           cd ~/setup-pipeline/
           ./deploy.sh
           rm -f ~/deploy.tar.gz ~/remote_exec.sh
-          echo "Deployment successful!"
-          EOF
+          echo "=== Deployment successful! ==="
+          REOF
           chmod +x remote_exec.sh
-          
-          # Bundle everything into a single archive
-          tar -czvf deploy.tar.gz docker-compose.yml deploy.sh .env remote_exec.sh nvd_database.json init-db.sh
+
+          # Bundle everything
+          tar -czvf deploy.tar.gz \
+            docker-compose.yml \
+            deploy.sh \
+            init-db.sh \
+            .env \
+            remote_exec.sh \
+            nvd_database.json
 
       - name: Transfer Package to VM
         run: |
-          # Use standard SCP (Do NOT use IAP as sandbox IAM doesn't support it)
-          gcloud compute scp deploy.tar.gz remote_exec.sh init-db.sh ${{ secrets.GCP_VM_NAME }}:~/
+          gcloud compute scp deploy.tar.gz remote_exec.sh init-db.sh \
+            ${{ secrets.GCP_VM_NAME }}:~/ \
+            --project ${{ secrets.GCP_PROJECT_ID }} \
+            --zone ${{ secrets.GCP_ZONE }}
 
       - name: Execute Deployment on VM
         run: |
-          # Run the script directly
-          gcloud compute ssh ${{ secrets.GCP_VM_NAME }} --command "bash ~/remote_exec.sh"
+          gcloud compute ssh ${{ secrets.GCP_VM_NAME }} \
+            --project ${{ secrets.GCP_PROJECT_ID }} \
+            --zone ${{ secrets.GCP_ZONE }} \
+            --command "bash ~/remote_exec.sh"
