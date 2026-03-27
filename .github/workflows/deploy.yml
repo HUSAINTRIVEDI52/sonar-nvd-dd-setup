@@ -102,38 +102,36 @@ jobs:
       # ── Build & transfer package ─────────────────────────────────────────────
       - name: Generate .env and Package
         run: |
-          # Write .env from secrets (NO indentation inside heredoc - spaces break env parsing)
-          cat > .env << EOF
-DB_PASSWORD=${{ secrets.DB_PASSWORD }}
-DD_SECRET_KEY=${{ secrets.DD_SECRET_KEY }}
-DD_ADMIN_PASSWORD=admin
-NVD_API_KEY=${{ secrets.NVD_API_KEY }}
-EOF
+          # Write .env from secrets using echo (heredoc breaks YAML with {{ }})
+          printf 'DB_PASSWORD=%s\n' '${{ secrets.DB_PASSWORD }}' > .env
+          printf 'DD_SECRET_KEY=%s\n' '${{ secrets.DD_SECRET_KEY }}' >> .env
+          printf 'DD_ADMIN_PASSWORD=admin\n' >> .env
+          printf 'NVD_API_KEY=%s\n' '${{ secrets.NVD_API_KEY }}' >> .env
 
           # Remote execution wrapper (avoids SSH inline shell-escaping issues)
           cat << 'REOF' > remote_exec.sh
-#!/bin/bash
-set -e
-echo "=== Starting remote deployment ==="
-mkdir -p ~/setup-pipeline
-tar -xzvf ~/deploy.tar.gz -C ~/setup-pipeline/
-chmod +x ~/setup-pipeline/deploy.sh
-chmod +x ~/setup-pipeline/init-db.sh
-cd ~/setup-pipeline/
-./deploy.sh
-rm -f ~/deploy.tar.gz ~/remote_exec.sh
-echo "=== Deployment successful! ==="
-REOF
-          chmod +x remote_exec.sh
+          #!/bin/bash
+            set -e
+            echo "=== Starting remote deployment ==="
+            mkdir -p ~/setup-pipeline
+            tar -xzvf ~/deploy.tar.gz -C ~/setup-pipeline/
+            chmod +x ~/setup-pipeline/deploy.sh
+            chmod +x ~/setup-pipeline/init-db.sh
+            cd ~/setup-pipeline/
+            ./deploy.sh
+            rm -f ~/deploy.tar.gz ~/remote_exec.sh
+            echo "=== Deployment successful! ==="
+            REOF
+                      chmod +x remote_exec.sh
 
-          # Bundle everything
-          tar -czvf deploy.tar.gz \
-            docker-compose.yml \
-            deploy.sh \
-            init-db.sh \
-            .env \
-            remote_exec.sh \
-            nvd_database.json
+                      # Bundle everything
+                      tar -czvf deploy.tar.gz \
+                        docker-compose.yml \
+                        deploy.sh \
+                        init-db.sh \
+                        .env \
+                        remote_exec.sh \
+                        nvd_database.json
 
       - name: Transfer Package to VM
         run: |
