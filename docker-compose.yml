@@ -21,7 +21,7 @@ services:
 
   # SonarQube
   sonarqube:
-    image: sonarqube:lts-community
+    image: sonarqube:latest
     container_name: sonarqube
     ports:
       - "9000:9000"
@@ -53,6 +53,8 @@ services:
       - DD_SECRET_KEY=${DD_SECRET_KEY}
       - DD_NVD_API_KEY=${NVD_API_KEY}
       - DD_CELERY_BROKER_URL=redis://redis:6379/0
+      - DD_ALLOWED_HOSTS=*
+      - DD_UWSGI_PASS_PORT=3031
     depends_on:
       db:
         condition: service_healthy
@@ -74,6 +76,7 @@ services:
       - DD_CELERY_BROKER_URL=redis://redis:6379/0
       - DD_SECRET_KEY=${DD_SECRET_KEY}
       - DD_NVD_API_KEY=${NVD_API_KEY}
+      - DD_ALLOWED_HOSTS=*
     depends_on:
       db:
         condition: service_healthy
