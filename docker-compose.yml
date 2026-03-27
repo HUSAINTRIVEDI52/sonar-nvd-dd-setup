@@ -114,18 +114,13 @@ services:
       - DD_ALLOWED_HOSTS=*
       - DD_ADMIN_USER=admin
       - DD_ADMIN_PASSWORD=${DD_ADMIN_PASSWORD:-admin}
-      # uWSGI socket settings — these are read by the image's entrypoint
-      - DD_UWSGI_SOCKET=/run/uwsgi/dojo.sock
-      - DD_UWSGI_ENDPOINT=0.0.0.0:3031
-    # FIX: explicit command so the image runs the uwsgi server, not a one-shot command
-    command: /bin/bash -c "uwsgi --socket 0.0.0.0:3031 --protocol=http --wsgi dojo.wsgi:application --workers 2 --threads 2 || python manage.py runserver 0.0.0.0:3031"
-    # FIX: healthcheck so nginx waits until the app is actually accepting connections
+    # Use the official image entrypoint (handles uWSGI binary protocol on 0.0.0.0:3031)
     healthcheck:
-      test: ["CMD-SHELL", "curl -sf http://localhost:3031/ || exit 1"]
+      test: ["CMD-SHELL", "python -c \"import socket; s=socket.socket(); s.connect(('localhost',3031)); s.close()\" || exit 1"]
       interval: 15s
       timeout: 10s
       retries: 10
-      start_period: 60s
+      start_period: 90s
     depends_on:
       db:
         condition: service_healthy
@@ -187,8 +182,9 @@ services:
     environment:
       - NGINX_METRICS_ENABLED=false
       - USE_TLS=false
-      # FIX: nginx proxies to the http port exposed by defectdojo container
-      - DD_UWSGI_PASS=defectdojo:3031
+      # Nginx proxies to DefectDojo via uWSGI binary protocol
+      - DD_UWSGI_HOST=defectdojo
+      - DD_UWSGI_PORT=3031
     volumes:
       - defectdojo_media:/app/media
     networks:

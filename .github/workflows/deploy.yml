@@ -102,27 +102,28 @@ jobs:
       # ── Build & transfer package ─────────────────────────────────────────────
       - name: Generate .env and Package
         run: |
-          # Write .env from secrets
+          # Write .env from secrets (NO indentation inside heredoc - spaces break env parsing)
           cat > .env << EOF
-          DB_PASSWORD=${{ secrets.DB_PASSWORD }}
-          DD_SECRET_KEY=${{ secrets.DD_SECRET_KEY }}
-          DD_ADMIN_PASSWORD=${{ secrets.DD_ADMIN_PASSWORD }}
-          NVD_API_KEY=${{ secrets.NVD_API_KEY }}
-          EOF
+DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+DD_SECRET_KEY=${{ secrets.DD_SECRET_KEY }}
+DD_ADMIN_PASSWORD=admin
+NVD_API_KEY=${{ secrets.NVD_API_KEY }}
+EOF
 
           # Remote execution wrapper (avoids SSH inline shell-escaping issues)
           cat << 'REOF' > remote_exec.sh
-          #!/bin/bash
-          set -e
-          echo "=== Starting remote deployment ==="
-          mkdir -p ~/setup-pipeline
-          tar -xzvf ~/deploy.tar.gz -C ~/setup-pipeline/
-          chmod +x ~/setup-pipeline/deploy.sh
-          cd ~/setup-pipeline/
-          ./deploy.sh
-          rm -f ~/deploy.tar.gz ~/remote_exec.sh
-          echo "=== Deployment successful! ==="
-          REOF
+#!/bin/bash
+set -e
+echo "=== Starting remote deployment ==="
+mkdir -p ~/setup-pipeline
+tar -xzvf ~/deploy.tar.gz -C ~/setup-pipeline/
+chmod +x ~/setup-pipeline/deploy.sh
+chmod +x ~/setup-pipeline/init-db.sh
+cd ~/setup-pipeline/
+./deploy.sh
+rm -f ~/deploy.tar.gz ~/remote_exec.sh
+echo "=== Deployment successful! ==="
+REOF
           chmod +x remote_exec.sh
 
           # Bundle everything
